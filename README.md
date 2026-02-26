@@ -68,10 +68,32 @@ python -m src.data.validate_candidates \
    --out data/candidates/candidates_train_train.jsonl
 ```
 
+Train results:
+
+- Validated: 9470 kept, 4021 dropped (truncated=2130, refusal=220, concise_judge=630, verbose_judge=1041)
+- Concise kept: 2602
+- Verbose kept: 2948
+- Too short kept: 3920
+- Wrote 9470 candidates to data/candidates/candidates_train_validated.jsonl
+
+Val results:
+
+- Validated: 532 kept, 215 dropped (truncated=122, refusal=15, concise_judge=25, verbose_judge=53)
+- Concise kept: 151
+- Verbose kept: 162
+- Too short kept: 219
+- Wrote 532 candidates to data/candidates/candidates_val_validated.jsonl
+
 ## 5. Build DPO data by pairing
 
 ```bash
-
+python -m src.data.build_dpo \
+  --candidates data/candidates/candidates_train_validated.jsonl \
+  --prompts data/prompts/split_train.jsonl \
+  --out data/dpo/dpo_train.jsonl
 ```
+
+Train: 4561 DPO pairs
+Val: 256 DPO pairs
 
 ## Next steps
