@@ -1,6 +1,5 @@
 """
-Build prompt pool by sampling from UltraFeedback and HelpSteer2 (no full-dataset iteration).
-Uses random indices + dataset.select() so we only iterate over sampled subsets.
+Build prompt pool by sampling from UltraFeedback and HelpSteer2.
 """
 
 import argparse
