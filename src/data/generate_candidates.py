@@ -8,7 +8,9 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
 from src.teacher.kimi_client import call_kimi
 
 VARIANTS = {
@@ -57,13 +59,61 @@ VARIANTS = {
 
 TOP_P = 0.9
 
-"""Get the token count of the text using the exact if tokenizer provided, else we use an estimate (words * 1.3)."""
 def token_count(text: str, tokenizer=None) -> int:
     if not text:
         return 0
     if tokenizer is not None:
         return len(tokenizer.encode(text, add_special_tokens=False))
     return int(len(re.findall(r"\S+", text)) * 1.3)
+
+
+def _generate_one(
+    prompt_id: str,
+    prompt_text: str,
+    variant: str,
+    tokenizer,
+    retries: int,
+    retry_delay: float,
+    delay: float,
+) -> tuple[dict | None, bool]:
+    """Call API for one (prompt, variant). Returns (row, skipped). On failure after retries, returns (None, True)."""
+    config = VARIANTS[variant]
+    text = None
+    for attempt in range(retries + 1):
+        try:
+            text = call_kimi(
+                prompt_text,
+                system_prompt=config["system"],
+                temperature=config["temperature"],
+                top_p=TOP_P,
+                max_tokens=config["max_tokens"],
+            )
+            break
+        except Exception as e:
+            if attempt < retries:
+                time.sleep(retry_delay)
+            else:
+                print(f"Error {prompt_id} {variant} (skipping): {e}", file=sys.stderr)
+                return (None, True)
+    if text is None:
+        return (None, True)
+    time.sleep(delay)
+    candidate_id = f"{prompt_id}_{variant}_v1"
+    meta = {
+        "temperature": config["temperature"],
+        "top_p": TOP_P,
+        "max_tokens": config["max_tokens"],
+        "variant": variant,
+    }
+    stats = {"tokens": token_count(text, tokenizer), "chars": len(text)}
+    row = {
+        "prompt_id": prompt_id,
+        "candidate_id": candidate_id,
+        "variant": variant,
+        "text": text,
+        "meta": {**meta, "stats": stats},
+    }
+    return (row, False)
 
 
 def main() -> None:
@@ -97,7 +147,25 @@ def main() -> None:
         "--delay",
         type=float,
         default=0.5,
-        help="Delay (s) between API calls to avoid rate limits.",
+        help="Delay (s) after each API call (per worker) to avoid rate limits.",
+    )
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of concurrent API calls.",
+    )
+    ap.add_argument(
+        "--retries",
+        type=int,
+        default=2,
+        help="Retries per API call on failure. Failed calls will not bewritten.",
+    )
+    ap.add_argument(
+        "--retry_delay",
+        type=float,
+        default=5.0,
+        help="Seconds to wait before retrying a failed API call.",
     )
     ap.add_argument(
         "--tokenizer",  
@@ -134,52 +202,51 @@ def main() -> None:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     total = len(prompts) * len(args.variants)
-    done = 0
+    tasks = [
+        (line["id"], line["prompt"], variant)
+        for line in prompts
+        for variant in args.variants
+    ]
+
+    rows: list[dict] = []
+    skipped = 0
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(
+                _generate_one,
+                prompt_id,
+                prompt_text,
+                variant,
+                tokenizer,
+                args.retries,
+                args.retry_delay,
+                args.delay,
+            ): (prompt_id, variant)
+            for prompt_id, prompt_text, variant in tasks
+        }
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 20 == 0 or completed == total:
+                print(f"Progress: {completed}/{total} completed", file=sys.stderr)
+            row, was_skipped = future.result()
+            if was_skipped:
+                skipped += 1
+            elif row is not None:
+                rows.append(row)
+
+    # Stable order: by prompt_id then variant
+    rows.sort(key=lambda r: (r["prompt_id"], r["variant"]))
 
     with open(args.out, "w") as out_f:
-        for i, line in enumerate(prompts):
-            prompt_id = line["id"]
-            prompt_text = line["prompt"]
+        for r in rows:
+            out_f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-            for variant in args.variants:
-                config = VARIANTS[variant]
-                try:
-                    text = call_kimi(
-                        prompt_text,
-                        system_prompt=config["system"],
-                        temperature=config["temperature"],
-                        top_p=TOP_P,
-                        max_tokens=config["max_tokens"],
-                    )
-                except Exception as e:
-                    print(f"Error {prompt_id} {variant}: {e}", file=sys.stderr)
-                    text = ""
-
-                candidate_id = f"{prompt_id}_{variant}_v1"
-                meta = {
-                    "temperature": config["temperature"],
-                    "top_p": TOP_P,
-                    "max_tokens": config["max_tokens"],
-                    "variant": variant,
-                }
-                stats = {
-                    "tokens": token_count(text, tokenizer),
-                    "chars": len(text),
-                }
-                row = {
-                    "prompt_id": prompt_id,
-                    "candidate_id": candidate_id,
-                    "variant": variant,
-                    "text": text,
-                    "meta": {**meta, "stats": stats},
-                }
-                out_f.write(json.dumps(row, ensure_ascii=False) + "\n")
-                done += 1
-                if done % 10 == 0 or done == total:
-                    print(f"Progress: {done}/{total} ({prompt_id} / {variant})")
-                time.sleep(args.delay)
-
-    print(f"Wrote {done} candidates to {args.out}")
+    print(f"Wrote {len(rows)} candidates to {args.out}", end="")
+    if skipped:
+        print(f" ({skipped} skipped due to API errors)", end="")
+    print()
 
 
 if __name__ == "__main__":
