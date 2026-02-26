@@ -173,6 +173,12 @@ def main() -> None:
         default=None,
         help="HuggingFace tokenizer name for exact token count (e.g. gpt2, meta-llama/Llama-2-7b-hf). If unset, use rough estimate.",
     )
+    ap.add_argument(
+        "--checkpoint_every",
+        type=int,
+        default=1000,
+        help="Flush output file every N rows to avoid losing progress.",
+    )
     args = ap.parse_args()
 
     prompts_path = Path(args.prompts)
@@ -211,30 +217,36 @@ def main() -> None:
     rows: list[dict] = []
     skipped = 0
     completed = 0
+    checkpoint_every = args.checkpoint_every
 
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {
-            executor.submit(
-                _generate_one,
-                prompt_id,
-                prompt_text,
-                variant,
-                tokenizer,
-                args.retries,
-                args.retry_delay,
-                args.delay,
-            ): (prompt_id, variant)
-            for prompt_id, prompt_text, variant in tasks
-        }
-        for future in as_completed(futures):
-            completed += 1
-            if completed % 20 == 0 or completed == total:
-                print(f"Progress: {completed}/{total} completed", file=sys.stderr)
-            row, was_skipped = future.result()
-            if was_skipped:
-                skipped += 1
-            elif row is not None:
-                rows.append(row)
+    with open(args.out, "w") as out_f:
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = {
+                executor.submit(
+                    _generate_one,
+                    prompt_id,
+                    prompt_text,
+                    variant,
+                    tokenizer,
+                    args.retries,
+                    args.retry_delay,
+                    args.delay,
+                ): (prompt_id, variant)
+                for prompt_id, prompt_text, variant in tasks
+            }
+            for future in as_completed(futures):
+                completed += 1
+                if completed % 20 == 0 or completed == total:
+                    print(f"Progress: {completed}/{total} completed", file=sys.stderr)
+                row, was_skipped = future.result()
+                if was_skipped:
+                    skipped += 1
+                elif row is not None:
+                    rows.append(row)
+                    out_f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    if checkpoint_every and len(rows) % checkpoint_every == 0:
+                        out_f.flush()
+                        print(f"Checkpoint: {len(rows)} rows written (flushed)", file=sys.stderr)
 
     # Stable order: by prompt_id then variant
     rows.sort(key=lambda r: (r["prompt_id"], r["variant"]))

@@ -1,5 +1,7 @@
 # cs224n-verbosity-dpo
 
+# DPO
+
 ## 1. Build prompt pool with (samples, does not iterate full datasets):
 
 ```bash
@@ -12,7 +14,7 @@ python -m src.data.build_prompt_pool \
   --out data/prompts/prompt_pool.jsonl
 ```
 
-File will be in `data/prompts/prompt_pool.jsonl`. By default, 50% of prompts are sampled from UltraFeedback and 50% from HelpSteer2 (adjust with `--frac_ultrafeedback`).
+File will be in `data/prompts/prompt_pool.jsonl`. By default, 50% of prompts are sampled from UltraFeedback and 50% from HelpSteer2. 5000 prompts were selected.
 
 ## 2. Split prompts so train/val/test (90/5/5) don’t share the same prompts:
 
@@ -30,15 +32,7 @@ Creates `split_train.jsonl`, `split_val.jsonl`, `split_test.jsonl` in data/promp
 The candidates are **concise**, **verbose**, and **too_short**. Uses the teacher (Kimi) API.
 
 Other options: `--workers N` for concurrent calls. `--retries` and `--retry_delay` control retries on failure.
-
-```bash
-# train
-python -m src.data.generate_candidates \
-  --prompts data/prompts/split_train.jsonl \
-  --out data/candidates/candidates_train.jsonl \
-  --workers 4 \
-  --delay 0.1
-```
+_For 5000 prompts -> 15000 candidates (13500 for train), we used Modal_
 
 ```bash
 # val
@@ -49,18 +43,35 @@ python -m src.data.generate_candidates \
   --delay 0.5
 ```
 
+Generation takes a while, so switched to Modal.
+
+### Candidate generation with Modal
+
+`modal run --detach run_generate_modal.py` (from root; detach lets it run after terminal closes)
+
+to download:
+
 ```bash
-# test
-python -m src.data.generate_candidates \
-  --prompts data/prompts/split_test.jsonl \
-  --out data/candidates/candidates_test.jsonl \
-  --workers 4 \
-  --delay 0.5
+modal volume get verbosity-dpo-candidates candidates_train.jsonl data/candidates/candidates_train.jsonl
+```
+
+Note that 9 candidates weren't generated (prompts p000249, p001717, p001021) because the model deemed the prompts "high risk."
+
+## 4. Validate candidates
+
+- Uses LLM-as-a-judge (gpt-4o-mini) to filter for correct concise and verbose responses. Also filter out truncated responses or refusal responses.
+
+```bash
+python -m src.data.validate_candidates \
+   --candidates data/candidates/candidates_train.jsonl \
+   --prompts data/prompts/split_train.jsonl \
+   --out data/candidates/candidates_train_train.jsonl
+```
+
+## 5. Build DPO data by pairing
+
+```bash
+
 ```
 
 ## Next steps
-
-- **Validate candidates:** `python -m src.data.validate_candidates` (clean out bad candidates).
-- **Label pairs:** Use LLM judge to verify (a) concise is correct, (b) verbose is correct, (c) too-short misses key info and is incorrect, and drop any failures.
-- **Build DPO data:** `python -m src.data.build_dpo` → `dpo_train.jsonl` / `dpo_val.jsonl`.
-- **Train DPO**

@@ -1,4 +1,5 @@
 datasets
 openai
+google-generativeai
 python-dotenv
 huggingface_hub
