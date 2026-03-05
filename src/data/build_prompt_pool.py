@@ -9,7 +9,7 @@ from pathlib import Path
 
 from datasets import load_dataset
 
-# used for deduplication
+# used to check during deduplication
 def normalize_prompt(text: str) -> str:
     return " ".join(re.sub(r"\s+", " ", (text or "").strip()).split()).lower()
 
@@ -38,7 +38,7 @@ def _sample_from_dataset(
         if not prompt or len(prompt) < 10:
             continue
         key = normalize_prompt(prompt)
-        if key and key in seen_normalized:
+        if key and key in seen_normalized: # discard dupes
             continue
         if key:
             seen_normalized.add(key)
@@ -84,6 +84,13 @@ def main() -> None:
         default=Path("data/prompts/prompt_pool.jsonl"),
         help="Output JSONL path.",
     )
+    # build full 10k prompts, not just 5k
+    ap.add_argument(
+        "--existing_pool",
+        type=Path,
+        default=None,
+        help="Path to an existing prompt pool JSONL. Prompts in this file are excluded from new sampling, and new IDs start after the last ID in this file.",
+    )
     args = ap.parse_args()
 
     out_path = Path(args.out)
@@ -91,6 +98,19 @@ def main() -> None:
 
     rng = __import__("random").Random(args.seed)
     seen_normalized: set[str] = set()
+    id_offset = 0
+
+    # load existing prompts and use it to check that new prompts are not duplicates later
+    if args.existing_pool is not None:
+        with open(args.existing_pool) as f:
+            existing_rows = [json.loads(line) for line in f]
+        for r in existing_rows:
+            key = normalize_prompt(r.get("prompt", ""))
+            if key:
+                seen_normalized.add(key)
+        id_offset = len(existing_rows)
+        print(f"Loaded {id_offset} existing prompts from {args.existing_pool} (will skip duplicates)")
+
     rows: list[dict] = []
 
     use_uf = "ultrafeedback" in args.datasets
@@ -134,7 +154,7 @@ def main() -> None:
         rng.shuffle(rows)
 
     for i, r in enumerate(rows):
-        r["id"] = f"p{i:06d}"
+        r["id"] = f"p{id_offset + i:06d}"
 
     with open(out_path, "w") as f:
         for r in rows:
