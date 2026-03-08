@@ -1,5 +1,10 @@
-datasets
-openai
-google-generativeai
-python-dotenv
-huggingface_hub
+datasets==2.21.0
+openai==2.24.0
+python-dotenv==1.2.1
+huggingface_hub==1.4.0
+transformers==5.2.0
+accelerate==1.12.0
+bitsandbytes==0.49.2
+peft==0.18.1
+alpaca-eval==0.6.6
+trl==0.17.0
