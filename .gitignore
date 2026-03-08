@@ -1,2 +1,5 @@
 .env
 data/
+*.log
+__pycache__/
+configs/annotations_seed0_alpaca_eval_gpt4omini.json
