@@ -26,7 +26,7 @@ VARIANTS = {
             "- If the prompt has specific rules, follow it exactly but keep the steps brief.\n"
             "- As soon as the question is answered correctly, stop."
         ),
-        "max_tokens": 500, # this is pretty high because some of the prompts are complex; we rely on the prompt for conciseness.
+        "max_tokens": 800,
         "temperature": 0.4,
     },
 
@@ -39,7 +39,7 @@ VARIANTS = {
             "- If applicable, provide a longer step-by-step explanation.\n"
             "- Do NOT introduce errors or hallucinated details.\n"
         ),
-        "max_tokens": 1000,
+        "max_tokens": 1500,
         "temperature": 0.7,
     },
 

@@ -32,7 +32,7 @@ Creates `split_train.jsonl`, `split_val.jsonl`, `split_test.jsonl` in data/promp
 The candidates are **concise**, **verbose**, and **too_short**. Uses the teacher (Kimi) API.
 
 Other options: `--workers N` for concurrent calls. `--retries` and `--retry_delay` control retries on failure.
-_For 5000 prompts -> 15000 candidates (13500 for train), we used Modal_
+We mainly used this script for testing.
 
 ```bash
 # val
@@ -55,7 +55,10 @@ to download:
 modal volume get verbosity-dpo-candidates candidates_train.jsonl data/candidates/candidates_train.jsonl
 ```
 
-Note that 9 candidates weren't generated (prompts p000249, p001717, p001021) because the model deemed the prompts "high risk."
+Note that some candidates because the model deemed the prompts "high risk."
+26979 train candidates generated
+1497 val candidates generated
+1500 test candidates generated
 
 ## 4. Validate candidates
 
@@ -70,19 +73,27 @@ python -m src.data.validate_candidates \
 
 Train results:
 
-- Validated: 9470 kept, 4021 dropped (truncated=2130, refusal=220, concise_judge=630, verbose_judge=1041)
-- Concise kept: 2602
-- Verbose kept: 2948
-- Too short kept: 3920
-- Wrote 9470 candidates to data/candidates/candidates_train_validated.jsonl
+Validated: 18886 kept, 8093 dropped (truncated=229, refusal=506, concise_judge=3531, verbose_judge=3827)
+Concise kept: 5261
+Verbose kept: 4921
+Too short kept: 8704
+
+Wrote 18886 candidates to data/candidates/candidates_train_validated.jsonl
 
 Val results:
+Validated: 1178 kept, 319 dropped (truncated=15, refusal=29, concise_judge=123, verbose_judge=152)
+Concise kept: 361
+Verbose kept: 331
+Too short kept: 486
 
-- Validated: 532 kept, 215 dropped (truncated=122, refusal=15, concise_judge=25, verbose_judge=53)
-- Concise kept: 151
-- Verbose kept: 162
-- Too short kept: 219
-- Wrote 532 candidates to data/candidates/candidates_val_validated.jsonl
+Wrote 1178 candidates to data/candidates/candidates_val_validated.jsonl
+
+Train results:
+Validated: 1189 kept, 311 dropped (truncated=17, refusal=34, concise_judge=121, verbose_judge=139)
+Concise kept: 363
+Verbose kept: 344
+Too short kept: 482
+Wrote 1189 candidates to data/candidates/candidates_test_validated.jsonl
 
 ## 5. Build DPO data by pairing
 
@@ -93,7 +104,8 @@ python -m src.data.build_dpo \
   --out data/dpo/dpo_train.jsonl
 ```
 
-Train: 4561 DPO pairs
-Val: 256 DPO pairs
+Train: 8734 DPO pairs
+Val: 640 DPO pairs
+Test: 643 DPO pairs
 
 ## Next steps

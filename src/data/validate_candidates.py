@@ -24,16 +24,20 @@ JUDGE_MODEL = "gpt-4o-mini"
 
 
 def is_truncated(row: dict) -> bool:
-  """True if response hit the token limit or doesn't end with . ? ! after 15 chars)."""
+  """True if response hit the token limit or ends mid-sentence."""
   text = row["text"].strip()
   meta = row["meta"]
   max_tokens = meta["max_tokens"]
   tokens = meta["stats"]["tokens"]
   if max_tokens is not None and tokens is not None and tokens >= max_tokens:
       return True
-  last = text[-1] if text else ""
-  if len(text) > 15 and last not in (".", "?", "!"):
-    return True
+  if len(text) > 15:
+      last = text[-1]
+      if last in (",", ";"):
+          return True
+      # this can't capture everything, but I think this is good enough?
+      if text.endswith(" and") or text.endswith(" or") or text.endswith(" but"):
+          return True
   return False
 
 
@@ -134,8 +138,8 @@ def main() -> None:
       rows.append(json.loads(line))
 
   n_total = len(rows)
-  dropped_truncated = 0
-  dropped_refusal = 0
+  dropped_truncated: dict[str, int] = {}
+  dropped_refusal: dict[str, int] = {}
   dropped_concise_judge = 0
   dropped_verbose_judge = 0
 
@@ -143,20 +147,23 @@ def main() -> None:
   kept_without_judge: list[dict] = []
   to_judge: list[tuple] = []  # (row, prompt_text, retry_delay)
   for row in rows:
+    variant = row["variant"].strip().lower()
     if is_truncated(row):
-      dropped_truncated += 1
+      dropped_truncated[variant] = dropped_truncated.get(variant, 0) + 1
       continue
     if is_refusal_heuristic(row):
-      dropped_refusal += 1
+      dropped_refusal[variant] = dropped_refusal.get(variant, 0) + 1
       continue
-    variant = row["variant"].strip().lower()
     if variant in ("concise", "verbose"):
       prompt_text = prompt_by_id.get(row["prompt_id"]) or ""
       if prompt_text:
         to_judge.append((row, prompt_text, args.retry_delay, args.delay))
         continue
     kept_without_judge.append(row)
-  print(f"Dropped {dropped_truncated} truncated, {dropped_refusal} refusals", file=sys.stderr)
+  trunc_str = ", ".join(f"{k}={v}" for k, v in sorted(dropped_truncated.items()))
+  refusal_str = ", ".join(f"{k}={v}" for k, v in sorted(dropped_refusal.items()))
+  print(f"Dropped truncated: {sum(dropped_truncated.values())} ({trunc_str})", file=sys.stderr)
+  print(f"Dropped refusals:  {sum(dropped_refusal.values())} ({refusal_str})", file=sys.stderr)
 
   n_judge = len(to_judge)
   print(f"Judging {n_judge} candidates with {args.workers} workers...", file=sys.stderr, flush=True)
@@ -201,7 +208,8 @@ def main() -> None:
 
   print(
     f"Validated: {len(kept)} kept, {n_total - len(kept)} dropped "
-    f"(truncated={dropped_truncated}, refusal={dropped_refusal}, concise_judge={dropped_concise_judge}, verbose_judge={dropped_verbose_judge})",
+    f"(truncated={sum(dropped_truncated.values())}, refusal={sum(dropped_refusal.values())}, "
+    f"concise_judge={dropped_concise_judge}, verbose_judge={dropped_verbose_judge})",
     file=sys.stderr,
   )
   print("Concise kept: ", len([row for row in kept if row["variant"] == "concise"]))
