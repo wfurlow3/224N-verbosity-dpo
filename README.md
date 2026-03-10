@@ -182,9 +182,13 @@ python scripts/sft/train_sft_qlora.py \
   --lr 2e-4
 ```
 
-## What you must add for this to work
+# Next steps
 
-- `OPENAI_API_KEY` with API billing enabled is required for AlpacaEval judging.
-- ChatGPT Plus does not include OpenAI API billing/access.
-- AlpacaEval uses an LLM judge and will incur API cost.
-- Modal GPU setup will be needed later for actual SFT/DPO training runs.
+goals:
+
+- raw instruct
+- instruct + sft
+- instruct + vanilla dpo
+- instruct + disentangled dpo
+- instruct + sft + vanilla dpo
+- instruct + sft + disentangled dpo
