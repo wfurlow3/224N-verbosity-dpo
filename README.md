@@ -183,11 +183,16 @@ python scripts/sft/train_sft_qlora.py \
 
 # Next steps
 
-goals:
+done:
 
 - raw instruct
 - instruct + sft
-- instruct + vanilla dpo
 - instruct + disentangled dpo
+- instruct + vanilla dpo
 - instruct + sft + vanilla dpo
 - instruct + sft + disentangled dpo
+
+| Model                      | length_controlled_winrate | win_rate | standard_error | n_total | avg_length |
+| -------------------------- | ------------------------- | -------- | -------------- | ------- | ---------- |
+| mistral-7b-vanilla-dpo     | 14.54                     | 11.80    | 1.14           | 805     | 1488       |
+| mistral-7b-sft-vanilla-dpo | 14.55                     | 11.68    | 1.13           | 805     | 1480       |

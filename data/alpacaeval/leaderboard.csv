@@ -1,0 +1,3 @@
+,win_rate,standard_error,mode,avg_length,n_wins,n_wins_base,n_draws,n_total,discrete_win_rate,length_controlled_winrate,lc_standard_error
+mistral-7b-vanilla-dpo,11.801242236024844,1.1378029940832073,community,1488,95,710,0,805,11.801242236024844,14.543462414595481,0.29806087961272076
+mistral-7b-sft-vanilla-dpo,11.677018633540373,1.132595475633449,community,1480,94,711,0,805,11.677018633540373,14.54616768940496,0.3323645378716735
