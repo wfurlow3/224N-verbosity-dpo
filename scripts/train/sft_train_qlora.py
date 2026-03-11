@@ -29,15 +29,15 @@ outputs_volume = modal.Volume.from_name("verbosity-outputs", create_if_missing=T
 hf_cache_volume = modal.Volume.from_name("verbosity-hf-cache", create_if_missing=True)
 TRAIN_PATH = "/root/repo/data/sft/train.json"
 VAL_PATH = "/root/repo/data/sft/val.json"
-OUTPUT_DIR = "/root/repo/outputs/sft_mistral_instruct"  # Write outputs to mounted volume
-RESUME_CHECKPOINT = "/root/repo/outputs/sft_mistral_qlora/checkpoint-800"
+OUTPUT_DIR = "/root/repo/outputs/sft_on_instruct_v2"  # Write outputs to mounted volume
+RESUME_CHECKPOINT = None
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 SEED = 0
 MAX_SEQ_LENGTH = 1024
 PER_DEVICE_TRAIN_BATCH_SIZE = 1
 PER_DEVICE_EVAL_BATCH_SIZE = 1
 GRADIENT_ACCUMULATION_STEPS = 16
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 5e-5
 WARMUP_RATIO = 0.03
 WEIGHT_DECAY = 0.0
 LOGGING_STEPS = 5
@@ -56,8 +56,8 @@ image = (
         "trl==0.17.0",
     )
     .add_local_file(
-        "scripts/sft_train_qlora.py",
-        remote_path="/root/repo/scripts/sft_train_qlora.py",
+        "scripts/train/sft_train_qlora.py",
+        remote_path="/root/repo/scripts/train/sft_train_qlora.py",
     )
 )
 
@@ -241,7 +241,7 @@ def run_training(args):
 
 @app.function(
     image=image,
-    gpu="A10G",
+    gpu="A100",
     timeout=60 * 60 * 8,
     secrets=[modal.Secret.from_name("huggingface", required_keys=["HF_TOKEN"])],
     volumes={

@@ -83,9 +83,12 @@ def run_gen(
 
 @app.local_entrypoint()
 def main(
-    max_instances=max_instances,
-    num_shards=num_shards,
+    max_instances: int = max_instances,
+    num_shards: int = num_shards,
 ):
+    max_instances = int(max_instances)
+    num_shards = int(num_shards)
+
     run_kwargs = {
         "max_instances": max_instances,
         "num_shards": num_shards,

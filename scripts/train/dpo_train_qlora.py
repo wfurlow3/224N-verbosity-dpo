@@ -16,10 +16,10 @@ hf_cache_volume = modal.Volume.from_name("verbosity-hf-cache", create_if_missing
 
 DATA_PATH = "/root/repo/data/dpo/disentangled/dpo_train.jsonl"
 VAL_PATH = "/root/repo/data/dpo/disentangled/dpo_val.jsonl"
-OUTPUT_DIR = "/root/repo/outputs/dpo_mistral_instruct"
+OUTPUT_DIR = "/root/repo/outputs/dpo_on_sft_disentangled"
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
-SFT_ADAPTER_DIR = None  # Loads sft adapter if not training from instruct model
-RESUME_CHECKPOINT = None  # Allows resuming training from a checkpoint
+SFT_ADAPTER_DIR = "/root/repo/outputs/sft_mistral_instruct" # Loads sft adapter if not training from instruct model
+RESUME_CHECKPOINT = None # Allows resuming training from a checkpoint
 
 # Training hyperparameters
 SEED = 0
@@ -49,8 +49,8 @@ image = ( # Define modal image
         "trl==0.17.0",
     )
     .add_local_file(
-        "scripts/dpo_train_qlora.py",
-        remote_path="/root/repo/scripts/dpo_train_qlora.py",
+        "scripts/train/dpo_train_qlora.py",
+        remote_path="/root/repo/scripts/train/dpo_train_qlora.py",
     )
 )
 
@@ -217,14 +217,16 @@ def run_training(args): # Runs DPO training
     else:
         training_args = TrainingArguments(**train_args)
     dpo_init_params = inspect.signature(DPOTrainer.__init__).parameters
+    training_from_sft_adapter = SFT_ADAPTER_DIR is not None
     dpo_kwargs = {
         "model": policy_model,
         "ref_model": None,
         "args": training_args,
         "train_dataset": train_ds,
         "eval_dataset": val_ds,
-        "peft_config": lora_config,
     }
+    if not training_from_sft_adapter:
+        dpo_kwargs["peft_config"] = lora_config
     if "processing_class" in dpo_init_params:
         dpo_kwargs["processing_class"] = tokenizer
     elif "tokenizer" in dpo_init_params:
@@ -236,8 +238,12 @@ def run_training(args): # Runs DPO training
     if "beta" in dpo_init_params:
         dpo_kwargs["beta"] = BETA
 
-    # Older/newer TRL variants may not accept peft_config. Ensure policy has trainable LoRA params either way.
-    if "peft_config" not in dpo_init_params and not isinstance(policy_model, PeftModel):
+    # When starting from base model, ensure trainable LoRA params even if TRL doesn't accept peft_config.
+    if (
+        not training_from_sft_adapter
+        and "peft_config" not in dpo_init_params
+        and not isinstance(policy_model, PeftModel)
+    ):
         policy_model = get_peft_model(policy_model, lora_config)
         dpo_kwargs["model"] = policy_model
 
