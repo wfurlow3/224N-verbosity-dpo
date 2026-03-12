@@ -14,11 +14,11 @@ data_volume = modal.Volume.from_name("verbosity-data", create_if_missing=True)
 outputs_volume = modal.Volume.from_name("verbosity-outputs", create_if_missing=True)
 hf_cache_volume = modal.Volume.from_name("verbosity-hf-cache", create_if_missing=True)
 
-DATA_PATH = "/root/repo/data/dpo/disentangled/dpo_train.jsonl"
-VAL_PATH = "/root/repo/data/dpo/disentangled/dpo_val.jsonl"
-OUTPUT_DIR = "/root/repo/outputs/dpo_on_sft_disentangled"
+DATA_PATH = "/root/repo/data/dpo/vanilla/dpo_train.jsonl"
+VAL_PATH = "/root/repo/data/dpo/vanilla/dpo_val.jsonl"
+OUTPUT_DIR = "/root/repo/outputs/simpo_on_instruct_vanilla"
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
-SFT_ADAPTER_DIR = "/root/repo/outputs/sft_on_instruct_v2" # Loads sft adapter if not training from instruct model
+SFT_ADAPTER_DIR =  None # Loads sft adapter if not training from instruct model
 RESUME_CHECKPOINT = None # Allows resuming training from a checkpoint
 
 # Training hyperparameters
@@ -28,13 +28,14 @@ MAX_PROMPT_LENGTH = 512
 PER_DEVICE_TRAIN_BATCH_SIZE = 1
 PER_DEVICE_EVAL_BATCH_SIZE = 1
 GRADIENT_ACCUMULATION_STEPS = 16
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 5e-7
 WARMUP_RATIO = 0.03
 WEIGHT_DECAY = 0.0
 LOGGING_STEPS = 5
 EVAL_STEPS = 100
 SAVE_TOTAL_LIMIT = 3
-BETA = 0.1
+BETA = 2.5
+GAMMA = 0.25
 
 image = ( # Define modal image
     modal.Image.debian_slim(python_version="3.11")
@@ -49,8 +50,8 @@ image = ( # Define modal image
         "trl==0.17.0",
     )
     .add_local_file(
-        "scripts/train/dpo_train_qlora.py",
-        remote_path="/root/repo/scripts/train/dpo_train_qlora.py",
+        "scripts/train/simpo_train_qlora.py",
+        remote_path="/root/repo/scripts/train/simpo_train_qlora.py",
     )
 )
 
@@ -121,8 +122,9 @@ def build_model(
     return model
 
 
-def run_training(args): # Runs DPO training
+def run_training(args): # Runs SimPO training
     import torch # Include imports here to avoid local import issues
+    import torch.nn.functional as F
     from datasets import load_dataset
     from peft import (
         LoraConfig,
@@ -141,6 +143,63 @@ def run_training(args): # Runs DPO training
     import inspect
     DPOTrainer = trl.DPOTrainer
     DPOConfig = getattr(trl, "DPOConfig", None)
+
+    class SimPOTrainer(DPOTrainer):
+        def concatenated_forward(self, model, batch):
+            output = super().concatenated_forward(model, batch)
+
+
+            concatenated_batch = self.concatenated_inputs(batch, padding_value=self.padding_value)
+            completion_mask = concatenated_batch["completion_attention_mask"]
+
+            num_examples = batch["prompt_input_ids"].shape[0]
+            output["chosen_lengths"] = completion_mask[:num_examples].sum(-1)
+            output["rejected_lengths"] = completion_mask[num_examples:].sum(-1)
+
+            return output
+
+        def get_batch_loss_metrics(self, model, batch, train_eval="train"):
+            model_output = self.concatenated_forward(model, batch)
+
+            policy_chosen_logps = model_output["chosen_logps"]
+            policy_rejected_logps = model_output["rejected_logps"]
+            policy_chosen_logits = model_output.get("mean_chosen_logits")
+            policy_rejected_logits = model_output.get("mean_rejected_logits")
+
+            chosen_lengths = model_output["chosen_lengths"].clamp_min(1).to(policy_chosen_logps.dtype)
+            rejected_lengths = model_output["rejected_lengths"].clamp_min(1).to(policy_rejected_logps.dtype)
+
+            chosen_avg_logp = policy_chosen_logps / chosen_lengths
+            rejected_avg_logp = policy_rejected_logps / rejected_lengths
+            logits = BETA * (chosen_avg_logp - rejected_avg_logp) - GAMMA
+            loss = -F.logsigmoid(logits).mean()
+
+            chosen_reward = BETA * chosen_avg_logp
+            rejected_reward = BETA * rejected_avg_logp
+            reward_margin = chosen_reward - rejected_reward
+            reward_accuracy = (chosen_reward > rejected_reward).float().mean()
+
+            prefix = "eval_" if train_eval == "eval" else ""
+            metrics = {
+                f"{prefix}loss": self.accelerator.gather_for_metrics(loss.detach()).mean().item(),
+                f"{prefix}logps/chosen_avg": self.accelerator.gather_for_metrics(chosen_avg_logp.detach()).mean().item(),
+                f"{prefix}logps/rejected_avg": self.accelerator.gather_for_metrics(rejected_avg_logp.detach()).mean().item(),
+                f"{prefix}rewards/chosen": self.accelerator.gather_for_metrics(chosen_reward.detach()).mean().item(),
+                f"{prefix}rewards/rejected": self.accelerator.gather_for_metrics(rejected_reward.detach()).mean().item(),
+                f"{prefix}rewards/margins": self.accelerator.gather_for_metrics(reward_margin.detach()).mean().item(),
+                f"{prefix}rewards/accuracies": self.accelerator.gather_for_metrics(reward_accuracy.detach()).mean().item(),
+            }
+
+            if policy_chosen_logits is not None:
+                metrics[f"{prefix}logits/chosen"] = self.accelerator.gather_for_metrics(
+                    policy_chosen_logits.detach()
+                ).mean().item()
+            if policy_rejected_logits is not None:
+                metrics[f"{prefix}logits/rejected"] = self.accelerator.gather_for_metrics(
+                    policy_rejected_logits.detach()
+                ).mean().item()
+
+            return loss, metrics
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     logs_dir = os.path.join(OUTPUT_DIR, "logs")
@@ -216,7 +275,7 @@ def run_training(args): # Runs DPO training
         training_args = DPOConfig(**train_args, beta=BETA)
     else:
         training_args = TrainingArguments(**train_args)
-    dpo_init_params = inspect.signature(DPOTrainer.__init__).parameters
+    dpo_init_params = inspect.signature(SimPOTrainer.__init__).parameters
     training_from_sft_adapter = SFT_ADAPTER_DIR is not None
     dpo_kwargs = {
         "model": policy_model,
@@ -249,7 +308,7 @@ def run_training(args): # Runs DPO training
 
     dpo_kwargs = {k: v for k, v in dpo_kwargs.items() if k in dpo_init_params}
 
-    trainer = DPOTrainer(**dpo_kwargs)
+    trainer = SimPOTrainer(**dpo_kwargs)
 
     train_result = trainer.train(
         resume_from_checkpoint=RESUME_CHECKPOINT if args.resume_checkpoint else None
@@ -293,6 +352,7 @@ def run_training(args): # Runs DPO training
                 "down_proj",
             ],
             "beta": BETA,
+            "gamma": GAMMA,
             "quantization": "4bit-nf4-double-quant",
             "precision": "bf16" if use_bf16 else "fp16",
         },
@@ -314,7 +374,7 @@ def run_training(args): # Runs DPO training
     write_blueprint(os.path.join(OUTPUT_DIR, "run_blueprint.json"), blueprint)
     write_jsonl(os.path.join(logs_dir, "train_log_history.jsonl"), trainer.state.log_history)
 
-    print(f"Saved DPO adapter + tokenizer + manifest to {OUTPUT_DIR}")
+    print(f"Saved SimPO adapter + tokenizer + manifest to {OUTPUT_DIR}")
 
 
 @app.function(

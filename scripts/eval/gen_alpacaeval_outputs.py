@@ -10,8 +10,8 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"  # model for AlpacaEval generation.
-ADAPTER_DIR = "/root/repo/outputs/sft_on_instruct_v2" # If using SFT / DPO model
-OUTPUT_PATH = "data/alpacaeval/sft_on_instruct_v2_outputs.json"
+ADAPTER_DIR = "/root/repo/outputs/simpo_on_instruct_vanilla" # If using SFT / DPO model
+OUTPUT_PATH = "data/alpacaeval/simpo_on_instruct_vanilla.json"
 BATCH_SIZE = 4
 MAX_NEW_TOKENS = 512
 LOG_EVERY = 5
