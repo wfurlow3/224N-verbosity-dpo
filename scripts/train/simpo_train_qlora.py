@@ -1,4 +1,5 @@
-# Performs QLoRA DPO on Modal
+# Performs QLoRA SimPO on Modal (vanilla DPO data).
+
 import argparse
 import json
 import os
@@ -14,12 +15,13 @@ data_volume = modal.Volume.from_name("verbosity-data", create_if_missing=True)
 outputs_volume = modal.Volume.from_name("verbosity-outputs", create_if_missing=True)
 hf_cache_volume = modal.Volume.from_name("verbosity-hf-cache", create_if_missing=True)
 
+# config stuff
 DATA_PATH = "/root/repo/data/dpo/vanilla/dpo_train.jsonl"
 VAL_PATH = "/root/repo/data/dpo/vanilla/dpo_val.jsonl"
 OUTPUT_DIR = "/root/repo/outputs/simpo_on_instruct_vanilla"
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
-SFT_ADAPTER_DIR =  None # Loads sft adapter if not training from instruct model
-RESUME_CHECKPOINT = None # Allows resuming training from a checkpoint
+SFT_ADAPTER_DIR =  None 
+RESUME_CHECKPOINT = None 
 
 # Training hyperparameters
 SEED = 0
@@ -37,7 +39,7 @@ SAVE_TOTAL_LIMIT = 3
 BETA = 2.5
 GAMMA = 0.25
 
-image = ( # Define modal image
+image = ( 
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch",
@@ -56,15 +58,15 @@ image = ( # Define modal image
 )
 
 
-def ensure_eos(text, eos_token): # Ensures text ends with EOS token
+def ensure_eos(text, eos_token): 
     if not text:
         return text
     if eos_token and not text.endswith(eos_token):
         return text + eos_token
     return text
 
-
-def format_example(example, eos_token): # Formats example for DPO training
+# Formats example for SimPO training
+def format_example(example, eos_token): 
     prompt = (example["prompt"] or "").strip()
     chosen = (example["chosen"] or "").strip()
     rejected = (example["rejected"] or "").strip()
@@ -103,7 +105,7 @@ def build_model(
         else torch.float16,
     )
 
-    model = AutoModelForCausalLM.from_pretrained( # Load quantized base model
+    model = AutoModelForCausalLM.from_pretrained( 
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
@@ -117,13 +119,14 @@ def build_model(
     model.enable_input_require_grads()
 
 
-    if SFT_ADAPTER_DIR: # Load sft adapter if not training from instruct model
+    if SFT_ADAPTER_DIR: 
         model = PeftModel.from_pretrained(model, SFT_ADAPTER_DIR, is_trainable=True)
     return model
 
 
-def run_training(args): # Runs SimPO training
-    import torch # Include imports here to avoid local import issues
+# run SimPO training
+def run_training(args):
+    import torch 
     import torch.nn.functional as F
     from datasets import load_dataset
     from peft import (
@@ -145,22 +148,21 @@ def run_training(args): # Runs SimPO training
     DPOConfig = getattr(trl, "DPOConfig", None)
 
     class SimPOTrainer(DPOTrainer):
+        # add chosen/rejected lengths so we can use average logp per token (SimPO)
         def concatenated_forward(self, model, batch):
             output = super().concatenated_forward(model, batch)
-
-
             concatenated_batch = self.concatenated_inputs(batch, padding_value=self.padding_value)
             completion_mask = concatenated_batch["completion_attention_mask"]
-
             num_examples = batch["prompt_input_ids"].shape[0]
             output["chosen_lengths"] = completion_mask[:num_examples].sum(-1)
             output["rejected_lengths"] = completion_mask[num_examples:].sum(-1)
 
             return output
 
+        # logits = β * (chosen_avg - rejected_avg) - γ
+        # this 
         def get_batch_loss_metrics(self, model, batch, train_eval="train"):
             model_output = self.concatenated_forward(model, batch)
-
             policy_chosen_logps = model_output["chosen_logps"]
             policy_rejected_logps = model_output["rejected_logps"]
             policy_chosen_logits = model_output.get("mean_chosen_logits")
@@ -207,7 +209,6 @@ def run_training(args): # Runs SimPO training
 
     set_seed(SEED)
     random.seed(SEED)
-
     train_ds = load_dataset("json", data_files=DATA_PATH, split="train")
     val_ds = load_dataset("json", data_files=VAL_PATH, split="train")
 
@@ -297,7 +298,6 @@ def run_training(args): # Runs SimPO training
     if "beta" in dpo_init_params:
         dpo_kwargs["beta"] = BETA
 
-    # When starting from base model, ensure trainable LoRA params even if TRL doesn't accept peft_config.
     if (
         not training_from_sft_adapter
         and "peft_config" not in dpo_init_params
@@ -328,7 +328,6 @@ def run_training(args): # Runs SimPO training
             "val_size": len(val_ds),
         },
         "hyperparams": {
-            "smoke_test": bool(args.smoke_test),
             "max_steps": args.max_steps,
             "eval_steps": EVAL_STEPS,
             "save_steps": args.save_steps,
@@ -376,7 +375,7 @@ def run_training(args): # Runs SimPO training
 
     print(f"Saved SimPO adapter + tokenizer + manifest to {OUTPUT_DIR}")
 
-
+# MODAL LOGIC STARTS HERE (to run the training on Modal)
 @app.function(
     image=image,
     gpu="H100",
@@ -389,16 +388,14 @@ def run_training(args): # Runs SimPO training
     },
 )
 def run_training_modal(
-    smoke_test=True,
-    max_steps=2000,
+    max_steps=1000,
     save_steps=200,
     resume_checkpoint: bool = False,
 ):
-    smoke_test = str(smoke_test).lower() in {"1", "true", "yes", "y"}
     max_steps = int(max_steps)
     save_steps = int(save_steps)
 
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # Allow CUDA to allocate more memory
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     if "HF_TOKEN" in os.environ and "HUGGINGFACE_HUB_TOKEN" not in os.environ:
         os.environ["HUGGINGFACE_HUB_TOKEN"] = os.environ["HF_TOKEN"]
@@ -406,11 +403,9 @@ def run_training_modal(
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--save-steps", type=int, default=200)
-    parser.add_argument("--max-steps", type=int, default=2000)
-    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--resume-checkpoint", action="store_true")
     args = parser.parse_args([])
-    args.smoke_test = smoke_test
     args.max_steps = max_steps
     args.save_steps = save_steps
     args.resume_checkpoint = resume_checkpoint
@@ -422,13 +417,11 @@ def run_training_modal(
 
 @app.local_entrypoint()
 def modal_main(
-    smoke_test: bool = True,
-    max_steps: int = 2000,
+    max_steps: int = 1000,
     save_steps: int = 200,
     resume_checkpoint: bool = False,
 ):
     run_training_modal.remote(
-        smoke_test=smoke_test,
         max_steps=max_steps,
         save_steps=save_steps,
         resume_checkpoint=resume_checkpoint,

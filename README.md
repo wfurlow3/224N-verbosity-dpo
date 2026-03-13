@@ -9,20 +9,14 @@ Verbosity control via data-centric DPO. We construct a verbosity-disentangled pr
 ├── data/
 │   ├── alpacaeval/                      # AlpacaEval outputs and annotations
 │   ├── candidates/                      # Raw candidates + filtered candidates
-│   │   └── raw/                         # Raw chunked candidates from Modal
 │   ├── dpo/
 │   │   ├── disentangled/                # Verbosity-disentangled DPO pairs
 │   │   └── vanilla/                     # UltraFeedback binarized DPO pairs
 │   ├── prompts/                         # Prompt pool and train/val/test splits
-├── notebooks/                           # Plots
 ├── scripts/
 │   ├── data/                            # Data pipeline scripts
-│   ├── dev/                             # Development/smoke test scripts
 │   ├── eval/                            # AlpacaEval generation + scoring
-│   └── train/                           # SFT + DPO training scripts (Modal)
-│       ├── dpo_train_qlora.py           # DPO (disentangled or vanilla, with or without SFT)
-│       ├── sft_train_qlora.py           # SFT
-│       └── simpo_train_qlora.py         # SimPO
+│   └── train/                           # SFT, DPO, and SimPO training scripts (Modal)
 ├── sft_model/                           # Local SFT adapter files
 └── src/
     ├── data/                            # Scripts for building disentangled and vanilla datasets for DPO.
@@ -53,14 +47,14 @@ python -m src.data.build_prompt_pool \
   --n_prompts 10000 \
   --frac_ultrafeedback 0.5 \
   --seed 42 \
-  --out data/prompts/prompt_pool.jsonl
+  --out data/prompts/prompt_pool_10k.jsonl
 ```
 
 ### 2. Split prompts (90/5/5 train/val/test)
 
 ```bash
 python -m src.data.split_prompts \
-  --prompts data/prompts/prompt_pool.jsonl \
+  --prompts data/prompts/prompt_pool_10k.jsonl \
   --out_dir data/prompts \
   --train_frac 0.90 --val_frac 0.05
 ```
@@ -206,16 +200,16 @@ modal volume get verbosity-outputs sft_model /tmp/sft_model
 All four DPO conditions use a single script. The `--data` flag selects the dataset and `--sft` loads the SFT adapter before training:
 
 ```bash
-# Disentangled DPO — instruct base
+# Disentangled DPO
 modal run --detach scripts/train/dpo_train_qlora.py --data disentangled
 
-# Disentangled DPO — SFT
+# Disentangled DPO + SFT
 modal run --detach scripts/train/dpo_train_qlora.py --data disentangled --sft
 
-# Vanilla DPO — instruct base
+# Vanilla DPO
 modal run --detach scripts/train/dpo_train_qlora.py --data vanilla
 
-# Vanilla DPO — SFT
+# Vanilla DPO  + SFT
 modal run --detach scripts/train/dpo_train_qlora.py --data vanilla --sft
 ```
 
@@ -232,16 +226,16 @@ modal run --detach scripts/train/simpo_train_qlora.py
 ### 1. Generate AlpacaEval outputs (Modal)
 
 ```bash
-modal run scripts/eval/modal_run_gen_alpacaeval.py \
+modal run scripts/eval/run_gen_alpacaeval.py \
   --adapter_dir /root/repo/outputs/<model_dir> \
-  --output_path data/alpacaeval/<model_name>_outputs.json \
+  --output_path /root/repo/data/alpacaeval/<model_name>_outputs.json \
   --generator_name <model_name>
 ```
 
 download outputs:
 
 ```bash
-modal volume get verbosity-outputs <model_name>_outputs.json data/alpacaeval/<model_name>_outputs.json
+modal volume get verbosity-data alpacaeval/<model_name>_outputs.json data/alpacaeval/<model_name>_outputs.json
 ```
 
 ### 2. Score with AlpacaEval 2.0
@@ -265,8 +259,8 @@ Note: need to edit `--output_path` per model to avoid overwriting shared `annota
 | ------------------------------ | ------ | --------- | ----------- |
 | Mistral-7B-Instruct (baseline) | 20.0   | 28.1      | 1381        |
 | + SFT                          | 5.2    | 3.6       | 2004        |
+| + SimPO (vanilla)              | 20.77  | 14.91     | 1382        |
 | + Vanilla DPO                  | 11.80  | 14.54     | 1488        |
 | + SFT + Vanilla DPO            | 11.68  | 14.55     | 1480        |
-| + Disentangled DPO             | --     | --        | --          |
-| + SFT + Disentangled DPO       | --     | --        | --          |
-| + SimPO                        | --     | --        | --          |
+| + Disentangled DPO             | 11.4   | 20.6      | 829         |
+| + SFT + Disentangled DPO       | 11.4   | 14.0      | 1159        |

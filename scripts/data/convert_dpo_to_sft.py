@@ -1,4 +1,4 @@
-# Converts DPO jsonl splits to deduplicated SFT json splits
+# Converts DPO jsonl splits to deduplicated SFT json splits (we don't need rejected responses for SFT)
 
 import json
 import os
@@ -41,13 +41,14 @@ def convert_split(input_paths, output_path, split_name):
 def main():
     os.makedirs("data/sft", exist_ok=True)
 
+    # we put dpo train and val -> sft train, and then test -> sft val for larger train dataset
     convert_split(
-        input_paths=["data/dpo/dpo_train.jsonl", "data/dpo/dpo_val.jsonl"],
+        input_paths=["data/dpo/disentangled/dpo_train.jsonl", "data/dpo/disentangled/dpo_val.jsonl"],
         output_path="data/sft/train.json",
         split_name="sft_train",
     )
     convert_split(
-        input_paths=["data/dpo/dpo_test.jsonl"],
+        input_paths=["data/dpo/disentangled/dpo_test.jsonl"],
         output_path="data/sft/val.json",
         split_name="sft_val",
     )

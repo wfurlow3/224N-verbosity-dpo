@@ -1,6 +1,5 @@
-"""
-Run generate_candidates.py on Modal, parallelized across N chunks.
-"""
+# runs generate_candidates.py on Modal, parallelized across N chunks.
+
 import json
 import os
 import subprocess

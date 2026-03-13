@@ -76,7 +76,7 @@ image = (
     )
 )
 
-
+## HELPERS
 def ensure_eos(text, eos_token):
     if not text:
         return text
@@ -84,7 +84,7 @@ def ensure_eos(text, eos_token):
         return text + eos_token
     return text
 
-
+# helps format examples for training
 def format_example(example, eos_token):
     prompt = (example["prompt"] or "").strip()
     chosen = (example["chosen"] or "").strip()
@@ -108,6 +108,7 @@ def write_jsonl(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
+## MAIN MODEL LOGIC STARTS HERE
 def build_model(
     torch,
     AutoModelForCausalLM,
@@ -270,8 +271,9 @@ def run_training(args):
 
     dpo_kwargs = {k: v for k, v in dpo_kwargs.items() if k in dpo_init_params}
 
-    trainer = DPOTrainer(**dpo_kwargs)
+    trainer = DPOTrainer(**dpo_kwargs) # build DPO trainer
 
+    # train starts here
     train_result = trainer.train(
         resume_from_checkpoint=RESUME_CHECKPOINT if args.resume_checkpoint else None
     )
@@ -332,6 +334,7 @@ def run_training(args):
     print(f"Saved DPO adapter + tokenizer + manifest to {OUTPUT_DIR}")
 
 
+# MODAL LOGIC STARTS HERE (to run the training on Modal)
 @app.function(
     image=image,
     gpu="H100",
@@ -372,7 +375,6 @@ def run_training_modal(
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--resume-checkpoint", action="store_true")
     args = parser.parse_args([])
-    args.smoke_test = False
     args.max_steps = max_steps
     args.save_steps = save_steps
     args.resume_checkpoint = resume_checkpoint
