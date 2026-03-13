@@ -36,17 +36,26 @@ def build_gen_cmd(
     max_instances,
     num_shards,
     shard_id,
+    adapter_dir=None,
+    output_path=None,
+    generator_name=None,
 ):
     cmd = [  # Command for one shard
         "python",
         "scripts/eval/gen_alpacaeval_outputs.py",
-        "--max_instances",
-        str(max_instances),
         "--num_shards",
         str(num_shards),
         "--shard_id",
         str(shard_id),
     ]
+    if max_instances is not None:
+        cmd += ["--max_instances", str(max_instances)]
+    if adapter_dir:
+        cmd += ["--adapter_dir", adapter_dir]
+    if output_path:
+        cmd += ["--output_path", output_path]
+    if generator_name:
+        cmd += ["--generator_name", generator_name]
     return cmd
 
 
@@ -65,6 +74,9 @@ def run_gen(
     max_instances=max_instances,
     num_shards=num_shards,
     shard_id=0,
+    adapter_dir=None,
+    output_path=None,
+    generator_name=None,
 ):
     env = os.environ.copy()
     if "HF_TOKEN" in env and "HUGGINGFACE_HUB_TOKEN" not in env:  # Map token env var
@@ -75,23 +87,35 @@ def run_gen(
         max_instances=max_instances,
         num_shards=num_shards,
         shard_id=shard_id,
+        adapter_dir=adapter_dir,
+        output_path=output_path,
+        generator_name=generator_name,
     )
     subprocess.run(cmd, cwd="/root/repo", env=env, check=True)  # Run generation script
-    data_volume.commit()  
-    hf_cache_volume.commit()  
+    data_volume.commit()
+    hf_cache_volume.commit()
 
 
 @app.local_entrypoint()
 def main(
     max_instances: int = max_instances,
     num_shards: int = num_shards,
+    adapter_dir: str = "",
+    output_path: str = "",
+    generator_name: str = "",
 ):
     max_instances = int(max_instances)
     num_shards = int(num_shards)
+    adapter_dir = adapter_dir or None
+    output_path = output_path or None
+    generator_name = generator_name or None
 
     run_kwargs = {
         "max_instances": max_instances,
         "num_shards": num_shards,
+        "adapter_dir": adapter_dir,
+        "output_path": output_path,
+        "generator_name": generator_name,
     }
 
     if num_shards == 1:  # Single shard path

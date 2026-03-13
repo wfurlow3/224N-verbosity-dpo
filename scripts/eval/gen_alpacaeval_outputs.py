@@ -15,6 +15,7 @@ OUTPUT_PATH = "data/alpacaeval/simpo_on_instruct_vanilla.json"
 BATCH_SIZE = 4
 MAX_NEW_TOKENS = 512
 LOG_EVERY = 5
+GENERATOR_NAME = None  # overrides the generator label in output JSON
 
 
 def load_alpacaeval_eval_split():
@@ -40,10 +41,21 @@ def batched(items, batch_size):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max_instances", type=int, default=None) 
+    parser.add_argument("--max_instances", type=int, default=None)
     parser.add_argument("--num_shards", type=int, default=1)  # Total shard count
     parser.add_argument("--shard_id", type=int, default=0) 
+    parser.add_argument("--adapter_dir", type=str, default=None, help="Path to LoRA adapter (overrides ADAPTER_DIR constant).")
+    parser.add_argument("--output_path", type=str, default=None, help="Output JSON path (overrides OUTPUT_PATH constant).")
+    parser.add_argument("--generator_name", type=str, default=None, help="Generator label in output JSON.")
     args = parser.parse_args()
+
+    global ADAPTER_DIR, OUTPUT_PATH, GENERATOR_NAME
+    if args.adapter_dir is not None:
+        ADAPTER_DIR = args.adapter_dir
+    if args.output_path is not None:
+        OUTPUT_PATH = args.output_path
+    if args.generator_name is not None:
+        GENERATOR_NAME = args.generator_name
     shard_tag = f"[shard {args.shard_id}/{args.num_shards}]"
     output_path = OUTPUT_PATH
     if args.num_shards > 1:  # Write per-shard output file
@@ -124,11 +136,12 @@ def main():
             decoded.append(text)
 
         for instruction, output in zip(instructions, decoded):
+            generator_label = GENERATOR_NAME or (f"{MODEL_NAME}+{ADAPTER_DIR}" if ADAPTER_DIR else MODEL_NAME)
             outputs.append(
                 {
                     "instruction": instruction,
                     "output": output.strip(),
-                    "generator": f"{MODEL_NAME}+{ADAPTER_DIR}" if ADAPTER_DIR else MODEL_NAME,
+                    "generator": generator_label,
                 }
             )
             processed += 1
