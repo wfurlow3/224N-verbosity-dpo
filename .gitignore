@@ -5,5 +5,4 @@ __pycache__/
 *.pyc
 .DS_Store
 configs/annotations_seed0_alpaca_eval_gpt4omini.json
-outputs/
 *.safetensors
