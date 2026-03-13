@@ -11,18 +11,18 @@ def main():
     parser.add_argument(
         "--input_stem",
         type=str,
-        default="data/alpacaeval/mistral_7b_sft_qlora_outputs.shard_*.json",
+        default="data/alpacaeval/simpo_on_instruct_vanilla/simpo_on_instruct_vanilla.shard_*.json",
         help="Glob for shard JSON files.",
     )
     parser.add_argument(
         "--output_path",
         type=str,
-        default="data/alpacaeval/mistral_7b_sft_qlora_outputs.json",
+        default="data/alpacaeval/simpo_on_instruct_vanilla/simpo_on_instruct_vanilla.shard_outputs.json",
         help="Path for merged JSON output.",
     )
     args = parser.parse_args()
 
-    shard_paths = sorted(glob.glob(args.input_glob))
+    shard_paths = sorted(glob.glob(args.input_stem))
 
     merged = []
     for path in shard_paths:

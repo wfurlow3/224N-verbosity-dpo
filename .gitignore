@@ -1,5 +1,8 @@
 .env
+/data/
+*.log
 __pycache__/
 *.pyc
-*.log
+.DS_Store
 configs/annotations_seed0_alpaca_eval_gpt4omini.json
+*.safetensors

@@ -138,7 +138,6 @@ python scripts/eval/gen_alpacaeval_outputs.py \
 ```
 
 Output format is a JSON list of:
-
 - `instruction`
 - `output`
 - `generator`
@@ -156,7 +155,7 @@ bash scripts/eval/run_alpacaeval.sh \
 
 Note: we override AlpacaEval's default `chatgpt_fn` judge config in-repo to avoid deprecated OpenAI judge model versions.
 
-## SFT skeleton (no auto-training)
+## SFT skeleton 
 
 Prepare SFT pairs (`instruction`, `output`) from OASST1:
 

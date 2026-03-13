@@ -10,8 +10,8 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"  # model for AlpacaEval generation.
-ADAPTER_DIR = None
-OUTPUT_PATH = "data/alpacaeval/mistral_7b_instruct_v02_outputs.json"
+ADAPTER_DIR = "/root/repo/outputs/simpo_on_instruct_vanilla" # If using SFT / DPO model
+OUTPUT_PATH = "data/alpacaeval/simpo_on_instruct_vanilla.json"
 BATCH_SIZE = 4
 MAX_NEW_TOKENS = 512
 LOG_EVERY = 5
@@ -42,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_instances", type=int, default=None) 
     parser.add_argument("--num_shards", type=int, default=1)  # Total shard count
-    parser.add_argument("--shard_id", type=int, default=0)  # This worker's shard index
+    parser.add_argument("--shard_id", type=int, default=0) 
     args = parser.parse_args()
     shard_tag = f"[shard {args.shard_id}/{args.num_shards}]"
     output_path = OUTPUT_PATH
@@ -60,13 +60,16 @@ def main():
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Loading tokenizer: {MODEL_NAME}", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)  # Load tokenizer
+    tokenizer_source = ADAPTER_DIR if ADAPTER_DIR else MODEL_NAME
+    print(f"Loading tokenizer: {tokenizer_source}", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)  # Load tokenizer
     if tokenizer.pad_token is None:  # Use EOS as pad when missing
         tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = torch.float16 if torch.cuda.is_available() else torch.float32  # fp16 on GPU, fp32 on CPU
-    device_map = "auto" if torch.cuda.is_available() else None  # Let HF place model on GPU(s)
+    tokenizer.padding_side = "left" # For decoding only
+
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32  # fp16 on GPU
+    device_map = "auto" if torch.cuda.is_available() else None  # Let HF place model on GPU
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -103,7 +106,7 @@ def main():
         if torch.cuda.is_available():  # Move batch tensors to model device
             encoded = {k: v.to(model.device) for k, v in encoded.items()}
 
-        with torch.no_grad():
+        with torch.no_grad(): # For inference
             generated = model.generate(
                 **encoded,
                 do_sample=False,
