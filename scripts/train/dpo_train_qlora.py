@@ -1,4 +1,12 @@
-# Performs QLoRA DPO on Modal
+# Performs QLoRA DPO on Modal.
+# Also supports disentangled and vanilla datasets, with and without SFT.
+#
+# scripts:
+#   modal run --detach scripts/train/dpo_train_qlora.py --data disentangled --sft
+#   modal run --detach scripts/train/dpo_train_qlora.py --data disentangled
+#   modal run --detach scripts/train/dpo_train_qlora.py --data vanilla
+#   modal run --detach scripts/train/dpo_train_qlora.py --data vanilla --sft
+
 import argparse
 import json
 import os
@@ -14,12 +22,26 @@ data_volume = modal.Volume.from_name("verbosity-data", create_if_missing=True)
 outputs_volume = modal.Volume.from_name("verbosity-outputs", create_if_missing=True)
 hf_cache_volume = modal.Volume.from_name("verbosity-hf-cache", create_if_missing=True)
 
-DATA_PATH = "/root/repo/data/dpo/disentangled/dpo_train.jsonl"
-VAL_PATH = "/root/repo/data/dpo/disentangled/dpo_val.jsonl"
-OUTPUT_DIR = "/root/repo/outputs/dpo_on_sft_disentangled"
+DATA_CONFIGS = {
+    "disentangled": {
+        "train": "/root/repo/data/dpo/disentangled/dpo_train.jsonl",
+        "val": "/root/repo/data/dpo/disentangled/dpo_val.jsonl",
+    },
+    "vanilla": {
+        "train": "/root/repo/data/dpo/vanilla/dpo_train.jsonl",
+        "val": "/root/repo/data/dpo/vanilla/dpo_val.jsonl",
+    },
+}
+SFT_ADAPTER_PATH = "/root/repo/outputs/sft_on_instruct_v2"
+
+# we set these in run_training_modal based on --data and --sft
+DATA_PATH = None
+VAL_PATH = None
+OUTPUT_DIR = None
+SFT_ADAPTER_DIR = None
+
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
-SFT_ADAPTER_DIR = "/root/repo/outputs/sft_on_instruct_v2" # Loads sft adapter if not training from instruct model
-RESUME_CHECKPOINT = None # Allows resuming training from a checkpoint
+RESUME_CHECKPOINT = None
 
 # Training hyperparameters
 SEED = 0
@@ -36,7 +58,7 @@ EVAL_STEPS = 100
 SAVE_TOTAL_LIMIT = 3
 BETA = 0.1
 
-image = ( # Define modal image
+image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch",
@@ -55,7 +77,7 @@ image = ( # Define modal image
 )
 
 
-def ensure_eos(text, eos_token): # Ensures text ends with EOS token
+def ensure_eos(text, eos_token):
     if not text:
         return text
     if eos_token and not text.endswith(eos_token):
@@ -63,7 +85,7 @@ def ensure_eos(text, eos_token): # Ensures text ends with EOS token
     return text
 
 
-def format_example(example, eos_token): # Formats example for DPO training
+def format_example(example, eos_token):
     prompt = (example["prompt"] or "").strip()
     chosen = (example["chosen"] or "").strip()
     rejected = (example["rejected"] or "").strip()
@@ -102,7 +124,7 @@ def build_model(
         else torch.float16,
     )
 
-    model = AutoModelForCausalLM.from_pretrained( # Load quantized base model
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
@@ -115,14 +137,13 @@ def build_model(
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
 
-
-    if SFT_ADAPTER_DIR: # Load sft adapter if not training from instruct model
+    if SFT_ADAPTER_DIR:
         model = PeftModel.from_pretrained(model, SFT_ADAPTER_DIR, is_trainable=True)
     return model
 
 
-def run_training(args): # Runs DPO training
-    import torch # Include imports here to avoid local import issues
+def run_training(args):
+    import torch
     from datasets import load_dataset
     from peft import (
         LoraConfig,
@@ -216,6 +237,7 @@ def run_training(args): # Runs DPO training
         training_args = DPOConfig(**train_args, beta=BETA)
     else:
         training_args = TrainingArguments(**train_args)
+
     dpo_init_params = inspect.signature(DPOTrainer.__init__).parameters
     training_from_sft_adapter = SFT_ADAPTER_DIR is not None
     dpo_kwargs = {
@@ -238,7 +260,6 @@ def run_training(args): # Runs DPO training
     if "beta" in dpo_init_params:
         dpo_kwargs["beta"] = BETA
 
-    # When starting from base model, ensure trainable LoRA params even if TRL doesn't accept peft_config.
     if (
         not training_from_sft_adapter
         and "peft_config" not in dpo_init_params
@@ -269,7 +290,6 @@ def run_training(args): # Runs DPO training
             "val_size": len(val_ds),
         },
         "hyperparams": {
-            "smoke_test": bool(args.smoke_test),
             "max_steps": args.max_steps,
             "eval_steps": EVAL_STEPS,
             "save_steps": args.save_steps,
@@ -284,13 +304,8 @@ def run_training(args): # Runs DPO training
             "lora_alpha": 32,
             "lora_dropout": 0.05,
             "target_modules": [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj",
             ],
             "beta": BETA,
             "quantization": "4bit-nf4-double-quant",
@@ -329,28 +344,35 @@ def run_training(args): # Runs DPO training
     },
 )
 def run_training_modal(
-    smoke_test=True,
-    max_steps=2000,
-    save_steps=200,
+    data: str = "disentangled",
+    sft: bool = False,
+    max_steps: int = 1000,
+    save_steps: int = 100,
     resume_checkpoint: bool = False,
 ):
-    smoke_test = str(smoke_test).lower() in {"1", "true", "yes", "y"}
-    max_steps = int(max_steps)
-    save_steps = int(save_steps)
+    global DATA_PATH, VAL_PATH, OUTPUT_DIR, SFT_ADAPTER_DIR
 
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # Allow CUDA to allocate more memory
+    if data not in DATA_CONFIGS:
+        raise ValueError(f"data must be one of {list(DATA_CONFIGS.keys())}")
 
+    DATA_PATH = DATA_CONFIGS[data]["train"]
+    VAL_PATH = DATA_CONFIGS[data]["val"]
+    SFT_ADAPTER_DIR = SFT_ADAPTER_PATH if sft else None
+    sft_tag = "_sft" if sft else ""
+    OUTPUT_DIR = f"/root/repo/outputs/dpo{sft_tag}_{data}_mistral_instruct"
+
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     if "HF_TOKEN" in os.environ and "HUGGINGFACE_HUB_TOKEN" not in os.environ:
         os.environ["HUGGINGFACE_HUB_TOKEN"] = os.environ["HF_TOKEN"]
     os.environ["HF_HOME"] = "/root/.cache/huggingface"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--save-steps", type=int, default=200)
-    parser.add_argument("--max-steps", type=int, default=2000)
+    parser.add_argument("--save-steps", type=int, default=100)
+    parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--resume-checkpoint", action="store_true")
     args = parser.parse_args([])
-    args.smoke_test = smoke_test
+    args.smoke_test = False
     args.max_steps = max_steps
     args.save_steps = save_steps
     args.resume_checkpoint = resume_checkpoint
@@ -362,13 +384,15 @@ def run_training_modal(
 
 @app.local_entrypoint()
 def modal_main(
-    smoke_test: bool = True,
-    max_steps: int = 2000,
-    save_steps: int = 200,
+    data: str = "disentangled",
+    sft: bool = False,
+    max_steps: int = 1000,
+    save_steps: int = 100,
     resume_checkpoint: bool = False,
 ):
     run_training_modal.remote(
-        smoke_test=smoke_test,
+        data=data,
+        sft=sft,
         max_steps=max_steps,
         save_steps=save_steps,
         resume_checkpoint=resume_checkpoint,
