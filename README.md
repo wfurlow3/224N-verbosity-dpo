@@ -17,7 +17,6 @@ Verbosity control via data-centric DPO. We construct a verbosity-disentangled pr
 │   ├── data/                            # Data pipeline scripts
 │   ├── eval/                            # AlpacaEval generation + scoring
 │   └── train/                           # SFT, DPO, and SimPO training scripts (Modal)
-├── sft_model/                           # Local SFT adapter files
 └── src/
     ├── data/                            # Scripts for building disentangled and vanilla datasets for DPO.
     └── teacher/                         # Sets up Kimi API client (for teacher model to generate responses)

@@ -6,3 +6,4 @@ __pycache__/
 configs/annotations_seed0_alpaca_eval_gpt4omini.json
 *.safetensors
 outputs/
+data/
